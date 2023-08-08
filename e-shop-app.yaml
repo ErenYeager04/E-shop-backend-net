@@ -1,0 +1,87 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: e-shop-db
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: e-shop-db
+  template: 
+    metadata:
+      labels:
+        app: e-shop-db
+    spec:
+      containers:
+      - name: e-shop-db
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        ports:
+        - containerPort: 1433
+        env:
+        - name: ACCEPT_EULA
+          value: "Y"
+        - name: MSSQL_SA_PASSWORD
+          value: "very_secure_password01"
+        volumeMounts:
+        - name: sql-data
+          mountPath: /var/opt/mssql
+      volumes:
+      - name: sql-data
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: e-shop-db
+spec:
+  selector:
+    app: e-shop-db
+  ports:
+  - protocol: TCP
+    port: 1433
+    targetPort: 1433
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: e-shop-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: e-shop-backend
+  template:
+    metadata:
+      labels:
+        app: e-shop-backend
+    spec:
+      containers:
+      - name: e-shop-backend
+        image: muralim23/e-shop-backend:v1.0
+        ports:
+        - containerPort: 80
+        env:
+        - name: DB_HOST
+          value: e-shop-db
+        - name: DB_NAME
+          value: e-shop-db
+        - name: DB_SA_PASSWORD
+          value: "very_secure_password01"
+        - name: FRONTEND
+          value: "https://e-shop-frontend-cs.onrender.com"
+        - name: JWT_SECRET
+          value: "super_secret_jwt_secret_for_my_project"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: e-shop-backend
+spec:
+  type: LoadBalancer
+  selector:
+    app: e-shop-backend
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 80
+

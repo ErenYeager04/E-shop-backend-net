@@ -1,10 +1,13 @@
 ﻿using AutoMapper;
-using E_shop_backend.Data;
+using Azure.Core;
 using E_shop_backend.Dtos;
 using E_shop_backend.Models;
 using E_shop_backend.Services.RefreshTokenService;
 using E_shop_backend.Services.ReviewService;
 using E_shop_backend.Services.UserServices;
+using FluentValidation;
+using FluentValidation.Results;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
@@ -13,7 +16,6 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
-using BCryptNet = BCrypt.Net.BCrypt;
 
 namespace E_shop_backend.Controllers
 {
@@ -22,81 +24,86 @@ namespace E_shop_backend.Controllers
     public class UserController : ControllerBase
     {
         private readonly IUserService _userService;
-        private readonly IMapper _mapper;
         private readonly IRefreshTokenService _refreshTokenService;
         private readonly IConfiguration _configuration;
         private readonly IReviewService _reviewService;
 
-        public UserController(IUserService userService,
-            IMapper mapper, 
+        public UserController(
+            IUserService userService,
             IRefreshTokenService refreshTokenService,
             IConfiguration configuration,
             IReviewService reviewService
             )
         {
             _userService = userService;
-            _mapper = mapper;
             _refreshTokenService = refreshTokenService;
             _configuration = configuration;
             _reviewService = reviewService;
         }
 
         [HttpPost("signin")]
-        public ActionResult<string> SignIn(RegisterDto request)
+        public async Task<IActionResult> SignIn(RegisterDto request,[FromServices] IValidator<RegisterDto> validator)
         {
-            if (!ModelState.IsValid)
+            // Validating object with fluentValidator
+            ValidationResult validationResult = validator.Validate(request);
+            if (!validationResult.IsValid)
             {
-                return BadRequest(ModelState);
-            }
-            if (_userService.UserExists(request.Email))
-            {
-                return BadRequest("User already exists");
-            }
-            var passwordHash = HashPassword(request.Password);
-            request.Password = passwordHash;
+                var errorMessage = validationResult.Errors
+                    .Select(error => error.ErrorMessage)
+                    .FirstOrDefault();
 
-            var usersMap = _mapper.Map<User>(request);
-            try
-            {
-                var user = _userService.CreateUser(usersMap);
-
-                var refreshToken = GenerateRefreshToken();
-                SetRefreshToken(refreshToken, user);
-                return GenerateJwtToken(user.Id, user.Email);
-            }catch (Exception ex)
-            {
-                return BadRequest(ex.Message);
+                return BadRequest(errorMessage);
             }
+            // Signing in user
+            var result = await _userService.SignUser(request);
+            // Checking if everything went correct
+            if (!result.Success)
+            {
+                return BadRequest(result.Message);
+            }
+            // Getting user
+            var user = result.Data;
+            // Generating tokens 
+            var refreshToken = GenerateRefreshToken();
+            SetRefreshToken(refreshToken, user);
+            var token = GenerateJwtToken(user.Id, user.Email);
 
+            return Ok(token);
         }
 
         [HttpPost("login")]
-        public ActionResult<string> Login(LoginDto request)
+        public async Task<IActionResult> Login(LoginDto request,[FromServices] IValidator<LoginDto> validator)
         {
-            if (!ModelState.IsValid)
+            ValidationResult validationResult = validator.Validate(request);
+
+            if (!validationResult.IsValid)
             {
-                return BadRequest(ModelState);
+                var errorMessage = validationResult.Errors
+                    .Select(error => error.ErrorMessage)
+                    .FirstOrDefault();
+
+                return BadRequest(errorMessage);
             }
 
-            var user = _userService.GetUser(request.Email);
-            if (user == null)
+            // Signing in user
+            var result = await _userService.LogUser(request);
+            // Checking if everything went correct
+            if (!result.Success)
             {
-                return BadRequest("User not found");
+                return BadRequest(result.Message);
             }
-
-            if (!VerifyPassword(request.Password, user.Password))
-            {
-                return BadRequest("Invalid password");
-            }
+            // Getting user
+            var user = result.Data;
+            // Generating tokens 
             var refreshToken = GenerateRefreshToken();
             SetRefreshToken(refreshToken, user);
+            var token = GenerateJwtToken(user.Id, user.Email);
 
-            return GenerateJwtToken(user.Id, user.Email);
-
+            return Ok(token);
         }
 
-        [HttpPost("refresh")]
-        public ActionResult<string> RefreshToken(string email)
+        [HttpGet("refresh/{email}")]
+        public IActionResult RefreshToken(string email)
         {
             // Geting token from httponly
             var refreshToken = Request.Cookies["refreshToken"];
@@ -126,37 +133,31 @@ namespace E_shop_backend.Controllers
         }
 
         [HttpPost("createReview")]
-        public IActionResult CreateReview(ReviewDto review)
+        [Authorize]
+        public async Task<IActionResult> CreateReview(ReviewDto review,[FromServices] IValidator<ReviewDto> validator)
         {
-            if (!ModelState.IsValid)
-            {
-                return BadRequest(ModelState);
-            }
-            var reviewMap = _mapper.Map<Review>(review);
+            ValidationResult validationResult = validator.Validate(review);
 
-            try
+            if (!validationResult.IsValid)
             {
-                var newReview = _reviewService.CreateReview(reviewMap);
-                return Ok(newReview);
+                var errorMessage = validationResult.Errors
+                    .Select(error => error.ErrorMessage)
+                    .FirstOrDefault();
 
-            }catch(Exception ex)
-            {
-                return BadRequest(ex.Message);
+                return BadRequest(errorMessage);
             }
 
-        }
+            // Creating a review
+            var result = await _reviewService.CreateReview(review);
 
-        [HttpGet("getUserReviews/{userId}")]
-        public IActionResult GetUserReviews(int userId)
-        {
-            try
+            // Checking if everything went correct
+            if (!result.Success)
             {
-                var userReviews = _reviewService.GetUserReviews(userId);
-                return Ok(userReviews);
-            } catch(Exception ex)
-            {
-                return NotFound(ex.Message);
+                return BadRequest(result.Message);
             }
+
+            return Ok(result.Data);
+
         }
 
         private RefreshToken GenerateRefreshToken()
@@ -177,7 +178,9 @@ namespace E_shop_backend.Controllers
             var cookieOptions = new CookieOptions
             {
                 HttpOnly = true,
+                Secure = true,
                 Expires = newRefreshToken.Expires,
+                SameSite = SameSiteMode.None,
 
             };
             Response.Cookies.Append("refreshToken", newRefreshToken.Token, cookieOptions);
@@ -201,13 +204,13 @@ namespace E_shop_backend.Controllers
                 new Claim(ClaimTypes.Role, "Admin")
             };
 
-            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration.GetSection("AppSettings")["Token"]));
+            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(Environment.GetEnvironmentVariable("JWT_SECRET")));
 
             var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
             var token = new JwtSecurityToken(
                 claims: claims,
-                 expires: DateTime.Now.AddDays(1),
+                expires: DateTime.Now.AddDays(1),
                 signingCredentials: credentials
             );
 
@@ -215,21 +218,5 @@ namespace E_shop_backend.Controllers
             return jwt;
         }
 
-        private string HashPassword(string password)
-        {
-            // Generate a salt for the password hash
-            string salt = BCryptNet.GenerateSalt();
-
-            // Hash the password using BCrypt with the generated salt
-            string hashedPassword = BCryptNet.HashPassword(password, salt);
-
-            // Return the hashed password
-            return hashedPassword;
-        }
-
-        private bool VerifyPassword(string password, string hashedPassword)
-        {
-            return BCryptNet.Verify(password, hashedPassword);
-        }
     }
 }

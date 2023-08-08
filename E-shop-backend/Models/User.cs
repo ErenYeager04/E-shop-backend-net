@@ -1,4 +1,5 @@
 ﻿using System.ComponentModel.DataAnnotations;
+using System.Text.Json.Serialization;
 
 namespace E_shop_backend.Models
 {
@@ -16,6 +17,7 @@ namespace E_shop_backend.Models
         //Relations
 
         public RefreshToken RefreshToken { get; set; } = null!;
+        [JsonIgnore]
         public ICollection<Review> Reviews { get; set; } = null!;
     }
 }

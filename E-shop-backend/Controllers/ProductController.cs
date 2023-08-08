@@ -1,10 +1,11 @@
-﻿using AutoMapper;
-using Azure.Core;
+﻿using Azure.Core;
 using E_shop_backend.Dtos;
 using E_shop_backend.Models;
-using E_shop_backend.Services.Product_GenreService;
 using E_shop_backend.Services.ProductServices;
 using E_shop_backend.Services.ReviewService;
+using FluentValidation;
+using FluentValidation.Results;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -16,112 +17,108 @@ namespace E_shop_backend.Controllers
     public class ProductController : ControllerBase
     {
         private readonly IProductService _productService;
-        private readonly IMapper _mapper;
-        private readonly IProduct_GenreService _product_GenreService;
         private readonly IReviewService _reviewService;
 
         public ProductController(IProductService productService,
-            IMapper mapper,
-            IProduct_GenreService product_GenreService,
             IReviewService reviewService)
         {
             _productService = productService;
-            _mapper = mapper;
-            _product_GenreService = product_GenreService;
             _reviewService = reviewService;
         }
 
         [HttpGet("getProducts")]
-        public IActionResult GetProducts()
+        public async Task<IActionResult> GetProducts([FromQuery] string? query)
         {
-            try
+
+            // Getting the products
+            var result = await _productService.GetProducts(query);
+            // Checking if everything went correct
+            if (!result.Success)
             {
-                var products = _productService.GetProducts();
-                var productsMap = _mapper.Map<List<ResProductsDto>>(products);
-                return Ok(productsMap);
-            } catch (Exception ex)
-            {
-                return BadRequest(ex.Message);
+                return BadRequest(result.Message);
             }
+
+            return Ok(result.Data);
         }
 
         [HttpPost("createProduct")]
-        public IActionResult CreateProduct(ReqProductDto newProduct)
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> CreateProduct(ReqProductDto newProduct, [FromServices] IValidator<ReqProductDto> validator)
         {
-            if (!ModelState.IsValid)
+            ValidationResult validationResult = validator.Validate(newProduct);
+
+            if (!validationResult.IsValid)
             {
-                return BadRequest(ModelState);
+                var errorMessage = validationResult.Errors
+                    .Select(error => error.ErrorMessage)
+                    .FirstOrDefault();
+
+                return BadRequest(errorMessage);
+            }
+            // Creating the product
+            var result = await _productService.CreateProduct(newProduct);
+            // Checking if everything went correct
+            if (!result.Success)
+            {
+                return BadRequest(result.Message);
             }
 
-            var product = new Product
-            {
-                Title = newProduct.Title,
-                Description = newProduct.Description,
-                ImageUrl = newProduct.ImageUrl,
-                Seasons = newProduct.Seasons,
-                Price = newProduct.Price,
-                RatingId = newProduct.RatingId,
-                StudioId = newProduct.StudioId,
-            };
-            var createdProduct = _productService.CreateProduct(product);
-            // Iterate over ProductGenre array and create new ProductGenre for numbers in the array
-            var productId = createdProduct.Id;
-            foreach (var genreId in newProduct.ProductGenres)
-            {
-                var productGenre = new Product_Genre
-                {
-                    ProductId = productId,
-                    GenreId = genreId
-                };
-
-                // Add the Product_Genre entity to the context
-                _product_GenreService.CreateProduct_Genre(productGenre);
-            }
-
-            return Ok(createdProduct);
+            return Ok(result.Data);
         }
 
         [HttpDelete("deleteProduct/{productId}")]
-        public IActionResult DeleteProduct(int productId)
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> DeleteProduct(int productId)
         {
-            try
+            // Deleting product
+            var result = await _productService.DeleteProduct(productId);
+            // Checking if everything went correct
+            if (!result.Success)
             {
-                var res = _productService.DeleteProduct(productId);
-                return Ok(res);
-            } catch (Exception ex)
-            {
-                return BadRequest(ex.Message);
+                return BadRequest(result.Message);
             }
+
+            return Ok(result.Data);
+
         }
 
         [HttpGet("getSingleProduct/{productId}")]
-        public IActionResult GetProduct(int productId)
+        public async Task<IActionResult> GetProduct(int productId)
         {
             // Get product itself
-            var product = _productService.GetProductById(productId);
-            // Get product genres
-            product.ProductGenres = _product_GenreService.GetProduct_Genre(product.Id);
-            // Get product reviews
-            product.Reviews = _reviewService.GetProductReviews(product.Id);
-            return Ok(product);
+            var result = await _productService.GetProductById(productId);
+
+            if (!result.Success)
+            {
+                return BadRequest(result.Message);
+            }
+
+            return Ok(result.Data);
         }
 
         [HttpPut("updateProduct")]
-        public IActionResult UpdateProduct(ResProductsDto updatedProduct)
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> UpdateProduct(ReqProductDto updatedProduct, [FromServices] IValidator<ReqProductDto> validator)
         {
-            if (!ModelState.IsValid)
+            ValidationResult validationResult = validator.Validate(updatedProduct);
+
+            if (!validationResult.IsValid)
             {
-                return BadRequest(ModelState);
+                var errorMessage = validationResult.Errors
+                    .Select(error => error.ErrorMessage)
+                    .FirstOrDefault();
+
+                return BadRequest(errorMessage);
+            };
+            // Update the product
+            var result = await _productService.UpdateProduct(updatedProduct);
+
+            if (!result.Success)
+            {
+                return BadRequest(result.Message);
             }
-            var productMap = _mapper.Map<Product>(updatedProduct);
-            try
-            {
-                var product = _productService.UpdateProduct(productMap);
-                return Ok(product);
-            } catch(Exception ex)
-            {
-                return BadRequest(ex.Message);
-            }
+
+            return Ok(result.Data);
         }
     }
 }

@@ -1,4 +1,6 @@
-﻿using E_shop_backend.Data;
+﻿using AutoMapper;
+using E_shop_backend.Data;
+using E_shop_backend.Dtos;
 using E_shop_backend.Models;
 using Microsoft.EntityFrameworkCore;
 using System.Data;
@@ -8,46 +10,57 @@ namespace E_shop_backend.Services.ReviewService
     public class ReviewService : IReviewService
     {
         private readonly DataContext _context;
+        private readonly IMapper _mapper;
 
-        public ReviewService(DataContext context)
+        public ReviewService(DataContext context, IMapper mapper)
         {
             _context = context;
+            _mapper = mapper;
         }
 
-        public Review CreateReview(Review newReview)
+        public async Task<ServiceResponse<Review>> CreateReview(ReviewDto Review)
         {
+            // Initializing service response
+            var serviceResponse = new ServiceResponse<Review>();
+
+            var reviewMap = _mapper.Map<Review>(Review);
             // Get user reviews
-            var user = _context.Users.Include(u => u.Reviews).FirstOrDefault(u => u.Id == newReview.UserId);
+            var user = await _context.Users.Include(u => u.Reviews).FirstOrDefaultAsync(u => u.Id == reviewMap.UserId);
             if (user == null)
             {
-                throw new Exception("User doesnt exist");
+                serviceResponse.Message = "User doesnt exist";
+                serviceResponse.Success = false;
+                return serviceResponse;
             }
-            // If user already have review for the product throw exception
-            if (user.Reviews.Any(u => u.ProductId == newReview.ProductId))
+            if(!_context.Products.Any(p => p.Id == reviewMap.ProductId))
             {
-                throw new Exception("You alredy have the review for the product");
+                serviceResponse.Message = "Product doesnt exist";
+                serviceResponse.Success = false;
+                return serviceResponse;
             }
-            _context.Reviews.Add(newReview);
-            _context.SaveChanges();
-            return newReview;
+            // If user already have review for the product send an exception
+            if (user.Reviews.Any(u => u.ProductId == reviewMap.ProductId))
+            {
+                serviceResponse.Message = "You alredy have the review for the product";
+                serviceResponse.Success = false;
+                return serviceResponse;
+            }
+
+            try
+            {
+                await _context.Reviews.AddAsync(reviewMap);
+                await _context.SaveChangesAsync();
+                serviceResponse.Data = reviewMap;
+                serviceResponse.Success = true;
+                return serviceResponse;
+            }catch(Exception ex)
+            {
+                serviceResponse.Message = "Error occured while saving the review";
+                serviceResponse.Success = false;
+                return serviceResponse;
+            }
+            
         }
 
-        public ICollection<Review> GetProductReviews(int productId)
-        {
-            var reviews = _context.Reviews
-            .Where(r => r.ProductId == productId)
-            .ToList();
-
-            return reviews;
-        }
-
-        public ICollection<Review> GetUserReviews(int userId)
-        {
-            var reviews = _context.Reviews
-            .Where(r => r.UserId == userId)
-            .ToList();
-
-            return reviews;
-        }
     }
 }

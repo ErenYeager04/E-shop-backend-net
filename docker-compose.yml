@@ -1,0 +1,12 @@
+version: '3.4'
+
+services:
+  e-shop-backend:
+    image: muralim23/eshopbackend:latest
+    environment:
+      - CONNECTION_STRING=Server=tcp:my-test-server-for-hobby.database.windows.net,1433;Initial Catalog=e-shop-db;Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;Authentication="Active Directory Default"
+      - FRONTEND=https://e-shop-frontend-cs.onrender.com
+      - JWT_SECRET=super_secret_jwt_secret_for_my_project
+    ports:
+      - 8001:80
+
